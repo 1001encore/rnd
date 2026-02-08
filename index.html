@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RND Explorer</title>
+    <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+    <style>
+        :root {
+            --bg: #0a0a0a;
+            --card: #161616;
+            --text: #e0e0e0;
+            --accent: #00e676;
+            --err: #ff5252;
+        }
+
+        body {
+            background-color: var(--bg);
+            color: var(--text);
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            padding: 20px;
+            margin: 0;
+        }
+
+        .container {
+            max-width: 1000px;
+            margin: 0 auto;
+        }
+
+        /* Header */
+        h1 {
+            margin-bottom: 5px;
+            color: var(--accent);
+        }
+
+        p {
+            color: #888;
+            margin-bottom: 25px;
+            font-size: 0.9rem;
+        }
+
+        /* Controls */
+        .controls {
+            display: flex;
+            gap: 10px;
+            background: var(--card);
+            padding: 15px;
+            border-radius: 8px;
+            flex-wrap: wrap;
+            border: 1px solid #333;
+        }
+
+        input,
+        select {
+            padding: 10px;
+            background: #222;
+            border: 1px solid #444;
+            color: white;
+            border-radius: 4px;
+            flex-grow: 1;
+            min-width: 120px;
+        }
+
+        button {
+            padding: 10px 20px;
+            background: var(--accent);
+            color: black;
+            font-weight: bold;
+            cursor: pointer;
+            border: none;
+            border-radius: 4px;
+            transition: opacity 0.2s;
+        }
+
+        button:hover {
+            opacity: 0.9;
+        }
+
+        button:disabled {
+            background: #333;
+            color: #666;
+            cursor: not-allowed;
+        }
+
+        /* Chart Area */
+        #chart {
+            width: 100%;
+            height: 600px;
+            background: var(--card);
+            margin-top: 20px;
+            border-radius: 8px;
+            border: 1px solid #333;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+        }
+
+        .status {
+            position: absolute;
+            color: #666;
+            font-size: 1.1rem;
+        }
+
+        .error {
+            color: var(--err);
+            background: rgba(255, 82, 82, 0.1);
+            padding: 10px;
+            border-radius: 4px;
+            margin-top: 20px;
+            display: none;
+            border: 1px solid var(--err);
+        }
+    </style>
+</head>
+
+<body>
+
+    <div class="container">
+        <h1>RND Explorer</h1>
+        <p>Risk-Neutral Density Estimator (Pure JS + Cloudflare)</p>
+
+        <div class="controls">
+            <input type="text" id="ticker" value="SPY" placeholder="Ticker (e.g. SPY)">
+            <button onclick="loadExpirations()" id="btn-load">1. Load Dates</button>
+            <select id="expiry" disabled>
+                <option>Select Date...</option>
+            </select>
+            <button onclick="calculateRND()" id="btn-calc" disabled>2. Calculate PDF</button>
+        </div>
+
+        <div id="error-box" class="error"></div>
+
+        <div id="chart">
+            <div class="status" id="status-text">Enter a ticker to begin</div>
+        </div>
+    </div>
+
+    <script>
+        // --- CONFIGURATION ---
+        const API_URL = "https://rnd.1001encore.workers.dev";
+
+        // --- MATH UTILS (Gaussian Kernel) ---
+        function gaussianSmooth(x, y, sigma) {
+            const smoothed = [];
+            for (let i = 0; i < x.length; i++) {
+                let num = 0, den = 0;
+                for (let j = 0; j < x.length; j++) {
+                    const w = Math.exp(-Math.pow(x[i] - x[j], 2) / (2 * sigma * sigma));
+                    num += w * y[j];
+                    den += w;
+                }
+                smoothed.push(num / den);
+            }
+            return smoothed;
+        }
+
+        function derivative(x, y) {
+            const d = [];
+            const newX = [];
+            for (let i = 1; i < x.length - 1; i++) {
+                d.push((y[i + 1] - y[i - 1]) / (x[i + 1] - x[i - 1]));
+                newX.push(x[i]);
+            }
+            return { x: newX, y: d };
+        }
+
+        // --- UI LOGIC ---
+        const ui = {
+            ticker: document.getElementById("ticker"),
+            loadBtn: document.getElementById("btn-load"),
+            calcBtn: document.getElementById("btn-calc"),
+            select: document.getElementById("expiry"),
+            chart: document.getElementById("chart"),
+            status: document.getElementById("status-text"),
+            err: document.getElementById("error-box")
+        };
+
+        function showError(msg) {
+            ui.err.style.display = 'block';
+            ui.err.innerText = "Error: " + msg;
+            ui.status.innerText = "";
+        }
+
+        async function loadExpirations() {
+            ui.err.style.display = 'none';
+            ui.loadBtn.innerText = "Loading...";
+
+            try {
+                const res = await fetch(`${API_URL}/?ticker=${ui.ticker.value}`);
+                const data = await res.json();
+
+                if (data.error) throw new Error(data.details || "API Error");
+                if (!data.optionChain) throw new Error("No option data found");
+
+                const dates = data.optionChain.result[0].expirationDates;
+                ui.select.innerHTML = "";
+
+                dates.forEach(ts => {
+                    const d = new Date(ts * 1000);
+                    const opt = document.createElement("option");
+                    opt.value = ts;
+                    opt.text = d.toISOString().split('T')[0];
+                    ui.select.appendChild(opt);
+                });
+
+                ui.select.disabled = false;
+                ui.calcBtn.disabled = false;
+                ui.loadBtn.innerText = "1. Load Dates";
+                ui.status.innerText = "Date Loaded. Click Calculate.";
+
+            } catch (e) {
+                showError(e.message);
+                ui.loadBtn.innerText = "Retry";
+            }
+        }
+
+        async function calculateRND() {
+            ui.calcBtn.innerText = "Calculating...";
+            ui.status.innerText = "Fetching Option Chain...";
+            ui.chart.innerHTML = ""; // Clear chart
+
+            try {
+                const ticker = ui.ticker.value;
+                const date = ui.select.value;
+
+                // 1. Fetch Data
+                const res = await fetch(`${API_URL}/?ticker=${ticker}&date=${date}`);
+                const json = await res.json();
+
+                if (json.error) throw new Error(json.details);
+
+                const result = json.optionChain.result[0];
+                const calls = result.options[0].calls;
+                const currentPrice = result.quote.regularMarketPrice;
+
+                // 2. Process Data
+                const data = calls
+                    .filter(c => c.volume > 0 && c.bid > 0.05 && c.ask > c.bid)
+                    .map(c => ({ k: c.strike, p: (c.bid + c.ask) / 2 }))
+                    .sort((a, b) => a.k - b.k);
+
+                if (data.length < 10) throw new Error("Not enough liquid options to calculate RND.");
+
+                const strikes = data.map(d => d.k);
+                const prices = data.map(d => d.p);
+
+                // 3. Math (Smooth -> D1 -> D2)
+                // Bandwidth = 1.5% of spot price is a good heuristic
+                const sigma = currentPrice * 0.015;
+
+                const smoothPrices = gaussianSmooth(strikes, prices, sigma);
+                const d1 = derivative(strikes, smoothPrices);
+                const d2 = derivative(d1.x, d1.y); // PDF
+
+                // Normalize PDF
+                const pdfY = d2.y.map(y => Math.max(0, y)); // Clip negatives
+                const area = pdfY.reduce((a, b) => a + b, 0);
+                const finalPDF = pdfY.map(y => y / area); // Normalize
+
+                // 4. Plot
+                Plotly.newPlot('chart', [{
+                    x: d2.x, y: finalPDF,
+                    mode: 'lines', fill: 'tozeroy',
+                    line: { color: '#00e676', width: 3 },
+                    name: 'Implied Probability'
+                }], {
+                    title: `RND: ${ticker} (${new Date(date * 1000).toLocaleDateString()})`,
+                    paper_bgcolor: '#161616', plot_bgcolor: '#161616',
+                    font: { color: '#e0e0e0' },
+                    xaxis: { title: 'Strike Price ($)', gridcolor: '#333' },
+                    yaxis: { title: 'Probability Density', gridcolor: '#333' },
+                    shapes: [{ type: 'line', x0: currentPrice, x1: currentPrice, y0: 0, y1: Math.max(...finalPDF), line: { color: 'white', dash: 'dot' } }]
+                }, { responsive: true });
+
+                ui.calcBtn.innerText = "2. Calculate PDF";
+
+            } catch (e) {
+                showError(e.message);
+                ui.calcBtn.innerText = "Retry";
+            }
+        }
+    </script>
+
+</body>
+
+</html>
