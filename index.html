@@ -84,24 +84,30 @@
         }
 
         /* Chart Area */
-        .chart-wrapper {
-            width: 100%;
-            display: flex;
-            justify-content: center;
-            margin-top: 20px;
-        }
-
         #chart {
             width: 100%;
-            max-width: 900px;
             height: 600px;
             background: var(--card);
+            margin-top: 20px;
             border-radius: 8px;
             border: 1px solid #333;
-            display: flex;
-            align-items: center;
-            justify-content: center;
             position: relative;
+        }
+
+        /* Center the status text before chart loads */
+        #chart .status {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+        }
+
+        /* Make Plotly chart fill the container */
+        #chart .js-plotly-plot,
+        #chart .plotly,
+        #chart .plot-container {
+            width: 100% !important;
+            height: 100% !important;
         }
 
         .status {
@@ -139,10 +145,8 @@
 
         <div id="error-box" class="error"></div>
 
-        <div class="chart-wrapper">
-            <div id="chart">
-                <div class="status" id="status-text">Enter a ticker to begin</div>
-            </div>
+        <div id="chart">
+            <div class="status" id="status-text">Enter a ticker to begin</div>
         </div>
     </div>
 
@@ -150,64 +154,130 @@
         // --- CONFIGURATION ---
         const API_URL = "https://rnd.1001encore.workers.dev";
 
-        // --- MATH UTILS (Gaussian Kernel & Smoothing) ---
-        function gaussianSmooth(x, y, sigma) {
-            const smoothed = [];
-            for (let i = 0; i < x.length; i++) {
-                let num = 0, den = 0;
+        // --- MATH UTILS (B-Spline Smoothing) ---
+
+        // Cubic B-spline basis function
+        function bsplineBasis(i, k, t, knots) {
+            if (k === 0) {
+                return (t >= knots[i] && t < knots[i + 1]) ? 1 : 0;
+            }
+
+            let left = 0, right = 0;
+            const denom1 = knots[i + k] - knots[i];
+            const denom2 = knots[i + k + 1] - knots[i + 1];
+
+            if (denom1 !== 0) {
+                left = ((t - knots[i]) / denom1) * bsplineBasis(i, k - 1, t, knots);
+            }
+            if (denom2 !== 0) {
+                right = ((knots[i + k + 1] - t) / denom2) * bsplineBasis(i + 1, k - 1, t, knots);
+            }
+
+            return left + right;
+        }
+
+        // Generate uniform knots for B-spline
+        function generateKnots(n, degree) {
+            const knots = [];
+            const m = n + degree + 1;
+            for (let i = 0; i < m; i++) {
+                if (i <= degree) {
+                    knots.push(0);
+                } else if (i >= m - degree - 1) {
+                    knots.push(1);
+                } else {
+                    knots.push((i - degree) / (n - degree));
+                }
+            }
+            return knots;
+        }
+
+        // Fit B-spline to data points using least squares
+        function fitBSpline(x, y, numControlPoints = 20, degree = 3) {
+            const n = numControlPoints;
+            const minX = Math.min(...x);
+            const maxX = Math.max(...x);
+
+            // Normalize x to [0, 1]
+            const tValues = x.map(xi => (xi - minX) / (maxX - minX));
+
+            const knots = generateKnots(n, degree);
+
+            // Build basis matrix
+            const B = [];
+            for (let j = 0; j < x.length; j++) {
+                const row = [];
+                const t = Math.min(0.9999, Math.max(0, tValues[j])); // Clamp to avoid boundary issues
+                for (let i = 0; i < n; i++) {
+                    row.push(bsplineBasis(i, degree, t, knots));
+                }
+                B.push(row);
+            }
+
+            // Solve least squares: (B^T B) c = B^T y
+            // Using simple pseudo-inverse approximation
+            const BtB = [];
+            const Bty = [];
+
+            for (let i = 0; i < n; i++) {
+                BtB.push(new Array(n).fill(0));
+                Bty.push(0);
                 for (let j = 0; j < x.length; j++) {
-                    const w = Math.exp(-Math.pow(x[i] - x[j], 2) / (2 * sigma * sigma));
-                    num += w * y[j];
-                    den += w;
+                    Bty[i] += B[j][i] * y[j];
+                    for (let k = 0; k < n; k++) {
+                        BtB[i][k] += B[j][i] * B[j][k];
+                    }
                 }
-                smoothed.push(num / den);
+                // Add regularization to avoid singular matrix
+                BtB[i][i] += 0.001;
             }
-            return smoothed;
-        }
 
-        // Multi-pass smoothing for better results
-        function multiPassSmooth(x, y, sigma, passes = 3) {
-            let result = y;
-            for (let i = 0; i < passes; i++) {
-                result = gaussianSmooth(x, result, sigma);
-            }
-            return result;
-        }
-
-        // Savitzky-Golay-like smoothing derivative (more stable)
-        function smoothDerivative(x, y, windowSize = 5) {
-            const d = [];
-            const newX = [];
-            const half = Math.floor(windowSize / 2);
-
-            for (let i = half; i < x.length - half; i++) {
-                // Linear regression over window to estimate slope
-                let sumX = 0, sumY = 0, sumXY = 0, sumX2 = 0;
-                let n = 0;
-                for (let j = -half; j <= half; j++) {
-                    const xi = x[i + j];
-                    const yi = y[i + j];
-                    sumX += xi;
-                    sumY += yi;
-                    sumXY += xi * yi;
-                    sumX2 += xi * xi;
-                    n++;
+            // Solve using Gauss-Seidel iteration
+            const controlPoints = new Array(n).fill(0);
+            for (let iter = 0; iter < 100; iter++) {
+                for (let i = 0; i < n; i++) {
+                    let sum = Bty[i];
+                    for (let j = 0; j < n; j++) {
+                        if (i !== j) sum -= BtB[i][j] * controlPoints[j];
+                    }
+                    controlPoints[i] = sum / BtB[i][i];
                 }
-                const slope = (n * sumXY - sumX * sumY) / (n * sumX2 - sumX * sumX);
-                d.push(slope);
-                newX.push(x[i]);
             }
-            return { x: newX, y: d };
+
+            return { controlPoints, knots, degree, minX, maxX };
         }
 
-        function derivative(x, y) {
-            const d = [];
-            const newX = [];
-            for (let i = 1; i < x.length - 1; i++) {
-                d.push((y[i + 1] - y[i - 1]) / (x[i + 1] - x[i - 1]));
-                newX.push(x[i]);
+        // Evaluate B-spline at given x values
+        function evaluateBSpline(spline, xValues) {
+            const { controlPoints, knots, degree, minX, maxX } = spline;
+            const n = controlPoints.length;
+
+            return xValues.map(x => {
+                // Normalize and clamp
+                let t = (x - minX) / (maxX - minX);
+                t = Math.min(0.9999, Math.max(0.0001, t));
+
+                let val = 0;
+                for (let i = 0; i < n; i++) {
+                    val += controlPoints[i] * bsplineBasis(i, degree, t, knots);
+                }
+                return val;
+            });
+        }
+
+        // Compute second derivative of B-spline (for RND)
+        function bsplineSecondDerivative(spline, xValues, h = null) {
+            const { minX, maxX } = spline;
+            if (h === null) {
+                h = (maxX - minX) / 500; // Small step for numerical derivative
             }
-            return { x: newX, y: d };
+
+            return xValues.map(x => {
+                const yMinus = evaluateBSpline(spline, [x - h])[0];
+                const yCenter = evaluateBSpline(spline, [x])[0];
+                const yPlus = evaluateBSpline(spline, [x + h])[0];
+                return (yPlus - 2 * yCenter + yMinus) / (h * h);
+            });
         }
 
         // Remove outliers using IQR method
@@ -221,32 +291,19 @@
             return data.filter(d => d[key] >= lower && d[key] <= upper);
         }
 
-        // Interpolate to uniform grid for better smoothing
-        function interpolateToGrid(strikes, prices, numPoints = 100) {
-            const minK = Math.min(...strikes);
-            const maxK = Math.max(...strikes);
-            const step = (maxK - minK) / (numPoints - 1);
-            const newStrikes = [];
-            const newPrices = [];
-
-            for (let i = 0; i < numPoints; i++) {
-                const k = minK + i * step;
-                newStrikes.push(k);
-
-                // Linear interpolation
-                let j = 0;
-                while (j < strikes.length - 1 && strikes[j + 1] < k) j++;
-
-                if (j >= strikes.length - 1) {
-                    newPrices.push(prices[prices.length - 1]);
-                } else if (k <= strikes[0]) {
-                    newPrices.push(prices[0]);
-                } else {
-                    const t = (k - strikes[j]) / (strikes[j + 1] - strikes[j]);
-                    newPrices.push(prices[j] + t * (prices[j + 1] - prices[j]));
+        // Gaussian smoothing for final PDF polish
+        function gaussianSmooth(x, y, sigma) {
+            const smoothed = [];
+            for (let i = 0; i < x.length; i++) {
+                let num = 0, den = 0;
+                for (let j = 0; j < x.length; j++) {
+                    const w = Math.exp(-Math.pow(x[i] - x[j], 2) / (2 * sigma * sigma));
+                    num += w * y[j];
+                    den += w;
                 }
+                smoothed.push(num / den);
             }
-            return { strikes: newStrikes, prices: newPrices };
+            return smoothed;
         }
 
         // --- UI LOGIC ---
@@ -318,27 +375,26 @@
                 const calls = result.options[0].calls;
                 const currentPrice = result.quote.regularMarketPrice;
 
-                // 2. Process Data with improved filtering
-                // Filter for liquid, reasonable options
+                // 2. Process Data with balanced filtering
+                // Filter for reasonably liquid options, but not too aggressive
                 let data = calls
                     .filter(c => {
-                        // Must have volume and open interest
-                        if (!c.volume || c.volume < 5) return false;
-                        if (!c.openInterest || c.openInterest < 10) return false;
+                        // Must have some volume OR open interest (relaxed)
+                        if ((!c.volume || c.volume < 1) && (!c.openInterest || c.openInterest < 5)) return false;
 
                         // Must have valid bid/ask
-                        if (!c.bid || c.bid < 0.10) return false;
+                        if (!c.bid || c.bid < 0.01) return false;
                         if (!c.ask || c.ask <= c.bid) return false;
 
-                        // Bid-ask spread should be reasonable (< 50% of mid)
+                        // Bid-ask spread should be reasonable (< 80% of mid) - relaxed
                         const mid = (c.bid + c.ask) / 2;
                         const spread = c.ask - c.bid;
-                        if (spread / mid > 0.5) return false;
+                        if (spread / mid > 0.8) return false;
 
-                        // Moneyness filter: focus on strikes within reasonable range
-                        // Typically 70% to 130% of current price
+                        // Moneyness filter: wider range to include tails
+                        // 50% to 150% of current price (relaxed from 70-130%)
                         const moneyness = c.strike / currentPrice;
-                        if (moneyness < 0.70 || moneyness > 1.30) return false;
+                        if (moneyness < 0.50 || moneyness > 1.50) return false;
 
                         return true;
                     })
@@ -353,49 +409,49 @@
                 // Remove price outliers
                 data = removeOutliers(data, 'p', 2.0);
 
-                if (data.length < 15) throw new Error("Not enough liquid options to calculate RND. Try a different expiration.");
+                if (data.length < 10) throw new Error("Not enough liquid options to calculate RND. Try a different expiration.");
 
-                // Interpolate to uniform grid for stable derivatives
-                const interpolated = interpolateToGrid(
-                    data.map(d => d.k),
-                    data.map(d => d.p),
-                    150 // More points for smoother curve
-                );
+                const strikes = data.map(d => d.k);
+                const prices = data.map(d => d.p);
 
-                const strikes = interpolated.strikes;
-                const prices = interpolated.prices;
+                // 3. Fit B-spline to call prices
+                // Use more control points for better fit, fewer for smoother curve
+                const numControlPoints = Math.min(25, Math.max(12, Math.floor(data.length / 3)));
+                const spline = fitBSpline(strikes, prices, numControlPoints, 3);
 
-                // 3. Math (Multi-pass Smooth -> Smooth Derivative)
-                // Adaptive bandwidth based on strike spacing
-                const avgSpacing = (strikes[strikes.length - 1] - strikes[0]) / strikes.length;
-                const sigma = Math.max(currentPrice * 0.025, avgSpacing * 4); // More aggressive smoothing
+                // Generate evaluation points (extend slightly beyond data range for smooth tails)
+                const minK = Math.min(...strikes);
+                const maxK = Math.max(...strikes);
+                const range = maxK - minK;
+                const evalMin = minK - range * 0.05; // Extend 5% on each side
+                const evalMax = maxK + range * 0.05;
+                const numEvalPoints = 200;
 
-                // Multi-pass smoothing for very smooth price curve
-                const smoothPrices = multiPassSmooth(strikes, prices, sigma, 3);
+                const evalStrikes = [];
+                for (let i = 0; i < numEvalPoints; i++) {
+                    evalStrikes.push(evalMin + (evalMax - evalMin) * i / (numEvalPoints - 1));
+                }
 
-                // Use smooth derivative with larger window
-                const d1 = smoothDerivative(strikes, smoothPrices, 7);
+                // Compute second derivative (the RND/PDF)
+                let pdfY = bsplineSecondDerivative(spline, evalStrikes);
 
-                // Smooth d1 before taking second derivative
-                const smoothD1 = multiPassSmooth(d1.x, d1.y, sigma * 0.8, 2);
-                const d2 = smoothDerivative(d1.x, smoothD1, 7); // PDF
+                // Light Gaussian smoothing on the PDF for extra polish
+                const sigma = (maxK - minK) / 30;
+                pdfY = gaussianSmooth(evalStrikes, pdfY, sigma);
 
-                // Final smoothing pass on PDF
-                let pdfY = multiPassSmooth(d2.x, d2.y, sigma * 0.5, 2);
-
-                // Clip negatives and very small values
+                // Clip negatives
                 pdfY = pdfY.map(y => Math.max(0, y));
 
-                // Normalize PDF properly (integrate with trapezoid rule)
+                // Normalize PDF (trapezoid rule)
                 let area = 0;
-                for (let i = 1; i < d2.x.length; i++) {
-                    area += (pdfY[i] + pdfY[i - 1]) / 2 * (d2.x[i] - d2.x[i - 1]);
+                for (let i = 1; i < evalStrikes.length; i++) {
+                    area += (pdfY[i] + pdfY[i - 1]) / 2 * (evalStrikes[i] - evalStrikes[i - 1]);
                 }
                 const finalPDF = area > 0 ? pdfY.map(y => y / area) : pdfY;
 
                 // 4. Plot
                 Plotly.newPlot('chart', [{
-                    x: d2.x, y: finalPDF,
+                    x: evalStrikes, y: finalPDF,
                     mode: 'lines', fill: 'tozeroy',
                     line: { color: '#00e676', width: 3 },
                     name: 'Implied Probability'
@@ -405,7 +461,9 @@
                     font: { color: '#e0e0e0' },
                     xaxis: { title: 'Strike Price ($)', gridcolor: '#333' },
                     yaxis: { title: 'Probability Density', gridcolor: '#333' },
-                    shapes: [{ type: 'line', x0: currentPrice, x1: currentPrice, y0: 0, y1: Math.max(...finalPDF), line: { color: 'white', dash: 'dot' } }]
+                    shapes: [{ type: 'line', x0: currentPrice, x1: currentPrice, y0: 0, y1: Math.max(...finalPDF), line: { color: 'white', dash: 'dot' } }],
+                    autosize: true,
+                    margin: { l: 60, r: 30, t: 50, b: 50 }
                 }, { responsive: true });
 
                 ui.calcBtn.innerText = "2. Calculate PDF";
