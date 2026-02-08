@@ -339,6 +339,10 @@
 
                 dates.forEach(ts => {
                     const d = new Date(ts * 1000);
+                    const dayOfWeek = d.getDay(); // Local timezone day
+                    // Skip weekends (Saturday = 6, Sunday = 0)
+                    if (dayOfWeek === 0 || dayOfWeek === 6) return;
+
                     const opt = document.createElement("option");
                     opt.value = ts;
                     opt.text = d.toISOString().split('T')[0];
@@ -372,42 +376,101 @@
                 if (json.error) throw new Error(json.details);
 
                 const result = json.optionChain.result[0];
-                const calls = result.options[0].calls;
+                const calls = result.options[0].calls || [];
+                const puts = result.options[0].puts || [];
                 const currentPrice = result.quote.regularMarketPrice;
 
-                // 2. Process Data with balanced filtering
-                // Filter for reasonably liquid options, but not too aggressive
-                let data = calls
-                    .filter(c => {
-                        // Must have some volume OR open interest (relaxed)
-                        if ((!c.volume || c.volume < 1) && (!c.openInterest || c.openInterest < 5)) return false;
+                // 2. Build maps of call and put prices by strike
+                const callMap = new Map();
+                const putMap = new Map();
 
-                        // Must have valid bid/ask
-                        if (!c.bid || c.bid < 0.01) return false;
-                        if (!c.ask || c.ask <= c.bid) return false;
+                // Helper to check if option is valid
+                const isValidOption = (opt) => {
+                    if ((!opt.volume || opt.volume < 1) && (!opt.openInterest || opt.openInterest < 5)) return false;
+                    if (!opt.bid || opt.bid < 0.01) return false;
+                    if (!opt.ask || opt.ask <= opt.bid) return false;
+                    const mid = (opt.bid + opt.ask) / 2;
+                    const spread = opt.ask - opt.bid;
+                    if (spread / mid > 0.8) return false;
+                    return true;
+                };
 
-                        // Bid-ask spread should be reasonable (< 80% of mid) - relaxed
-                        const mid = (c.bid + c.ask) / 2;
-                        const spread = c.ask - c.bid;
-                        if (spread / mid > 0.8) return false;
+                calls.forEach(c => {
+                    if (isValidOption(c)) {
+                        callMap.set(c.strike, (c.bid + c.ask) / 2);
+                    }
+                });
 
-                        // Moneyness filter: wider range to include tails
-                        // 50% to 150% of current price (relaxed from 70-130%)
-                        const moneyness = c.strike / currentPrice;
-                        if (moneyness < 0.50 || moneyness > 1.50) return false;
+                puts.forEach(p => {
+                    if (isValidOption(p)) {
+                        putMap.set(p.strike, (p.bid + p.ask) / 2);
+                    }
+                });
 
-                        return true;
+                // 3. Build unified call-price curve using OTM options only
+                // - For K < Spot: Use OTM puts, convert to call via put-call parity: C = P + S - K
+                // - For K > Spot: Use OTM calls directly
+                // - For K ≈ Spot: Average both (if available)
+
+                const allStrikes = [...new Set([...callMap.keys(), ...putMap.keys()])]
+                    .filter(k => {
+                        const moneyness = k / currentPrice;
+                        return moneyness >= 0.70 && moneyness <= 1.30;
                     })
-                    .map(c => ({
-                        k: c.strike,
-                        p: (c.bid + c.ask) / 2,
-                        vol: c.volume,
-                        oi: c.openInterest
-                    }))
-                    .sort((a, b) => a.k - b.k);
+                    .sort((a, b) => a - b);
+
+                if (allStrikes.length < 10) throw new Error("Not enough liquid options to calculate RND. Try a different expiration.");
+
+                // ATM zone: within 2% of spot
+                const atmLow = currentPrice * 0.98;
+                const atmHigh = currentPrice * 1.02;
+
+                let data = allStrikes.map(strike => {
+                    const callPrice = callMap.get(strike);
+                    const putPrice = putMap.get(strike);
+
+                    let price;
+
+                    if (strike >= atmLow && strike <= atmHigh) {
+                        // ATM zone: use both if available, prefer average
+                        if (callPrice !== undefined && putPrice !== undefined) {
+                            // Convert put to call-equivalent and average
+                            const putAsCall = putPrice + currentPrice - strike;
+                            price = (callPrice + putAsCall) / 2;
+                        } else if (callPrice !== undefined) {
+                            price = callPrice;
+                        } else if (putPrice !== undefined) {
+                            price = putPrice + currentPrice - strike;
+                        } else {
+                            return null;
+                        }
+                    } else if (strike < currentPrice) {
+                        // Below spot: use OTM put, convert to call-equivalent
+                        if (putPrice !== undefined) {
+                            price = putPrice + currentPrice - strike;
+                        } else if (callPrice !== undefined) {
+                            // Fallback to ITM call if no put available
+                            price = callPrice;
+                        } else {
+                            return null;
+                        }
+                    } else {
+                        // Above spot: use OTM call directly
+                        if (callPrice !== undefined) {
+                            price = callPrice;
+                        } else if (putPrice !== undefined) {
+                            // Fallback: convert ITM put to call
+                            price = putPrice + currentPrice - strike;
+                        } else {
+                            return null;
+                        }
+                    }
+
+                    return { k: strike, p: Math.max(0.01, price) };
+                }).filter(d => d !== null);
 
                 // Remove price outliers
-                data = removeOutliers(data, 'p', 2.0);
+                data = removeOutliers(data, 'p', 2.5);
 
                 if (data.length < 10) throw new Error("Not enough liquid options to calculate RND. Try a different expiration.");
 
