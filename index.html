@@ -84,11 +84,18 @@
         }
 
         /* Chart Area */
+        .chart-wrapper {
+            width: 100%;
+            display: flex;
+            justify-content: center;
+            margin-top: 20px;
+        }
+
         #chart {
             width: 100%;
+            max-width: 900px;
             height: 600px;
             background: var(--card);
-            margin-top: 20px;
             border-radius: 8px;
             border: 1px solid #333;
             display: flex;
@@ -132,8 +139,10 @@
 
         <div id="error-box" class="error"></div>
 
-        <div id="chart">
-            <div class="status" id="status-text">Enter a ticker to begin</div>
+        <div class="chart-wrapper">
+            <div id="chart">
+                <div class="status" id="status-text">Enter a ticker to begin</div>
+            </div>
         </div>
     </div>
 
@@ -141,7 +150,7 @@
         // --- CONFIGURATION ---
         const API_URL = "https://rnd.1001encore.workers.dev";
 
-        // --- MATH UTILS (Gaussian Kernel) ---
+        // --- MATH UTILS (Gaussian Kernel & Smoothing) ---
         function gaussianSmooth(x, y, sigma) {
             const smoothed = [];
             for (let i = 0; i < x.length; i++) {
@@ -156,6 +165,41 @@
             return smoothed;
         }
 
+        // Multi-pass smoothing for better results
+        function multiPassSmooth(x, y, sigma, passes = 3) {
+            let result = y;
+            for (let i = 0; i < passes; i++) {
+                result = gaussianSmooth(x, result, sigma);
+            }
+            return result;
+        }
+
+        // Savitzky-Golay-like smoothing derivative (more stable)
+        function smoothDerivative(x, y, windowSize = 5) {
+            const d = [];
+            const newX = [];
+            const half = Math.floor(windowSize / 2);
+
+            for (let i = half; i < x.length - half; i++) {
+                // Linear regression over window to estimate slope
+                let sumX = 0, sumY = 0, sumXY = 0, sumX2 = 0;
+                let n = 0;
+                for (let j = -half; j <= half; j++) {
+                    const xi = x[i + j];
+                    const yi = y[i + j];
+                    sumX += xi;
+                    sumY += yi;
+                    sumXY += xi * yi;
+                    sumX2 += xi * xi;
+                    n++;
+                }
+                const slope = (n * sumXY - sumX * sumY) / (n * sumX2 - sumX * sumX);
+                d.push(slope);
+                newX.push(x[i]);
+            }
+            return { x: newX, y: d };
+        }
+
         function derivative(x, y) {
             const d = [];
             const newX = [];
@@ -164,6 +208,45 @@
                 newX.push(x[i]);
             }
             return { x: newX, y: d };
+        }
+
+        // Remove outliers using IQR method
+        function removeOutliers(data, key, factor = 1.5) {
+            const values = data.map(d => d[key]).sort((a, b) => a - b);
+            const q1 = values[Math.floor(values.length * 0.25)];
+            const q3 = values[Math.floor(values.length * 0.75)];
+            const iqr = q3 - q1;
+            const lower = q1 - factor * iqr;
+            const upper = q3 + factor * iqr;
+            return data.filter(d => d[key] >= lower && d[key] <= upper);
+        }
+
+        // Interpolate to uniform grid for better smoothing
+        function interpolateToGrid(strikes, prices, numPoints = 100) {
+            const minK = Math.min(...strikes);
+            const maxK = Math.max(...strikes);
+            const step = (maxK - minK) / (numPoints - 1);
+            const newStrikes = [];
+            const newPrices = [];
+
+            for (let i = 0; i < numPoints; i++) {
+                const k = minK + i * step;
+                newStrikes.push(k);
+
+                // Linear interpolation
+                let j = 0;
+                while (j < strikes.length - 1 && strikes[j + 1] < k) j++;
+
+                if (j >= strikes.length - 1) {
+                    newPrices.push(prices[prices.length - 1]);
+                } else if (k <= strikes[0]) {
+                    newPrices.push(prices[0]);
+                } else {
+                    const t = (k - strikes[j]) / (strikes[j + 1] - strikes[j]);
+                    newPrices.push(prices[j] + t * (prices[j + 1] - prices[j]));
+                }
+            }
+            return { strikes: newStrikes, prices: newPrices };
         }
 
         // --- UI LOGIC ---
@@ -235,29 +318,80 @@
                 const calls = result.options[0].calls;
                 const currentPrice = result.quote.regularMarketPrice;
 
-                // 2. Process Data
-                const data = calls
-                    .filter(c => c.volume > 0 && c.bid > 0.05 && c.ask > c.bid)
-                    .map(c => ({ k: c.strike, p: (c.bid + c.ask) / 2 }))
+                // 2. Process Data with improved filtering
+                // Filter for liquid, reasonable options
+                let data = calls
+                    .filter(c => {
+                        // Must have volume and open interest
+                        if (!c.volume || c.volume < 5) return false;
+                        if (!c.openInterest || c.openInterest < 10) return false;
+
+                        // Must have valid bid/ask
+                        if (!c.bid || c.bid < 0.10) return false;
+                        if (!c.ask || c.ask <= c.bid) return false;
+
+                        // Bid-ask spread should be reasonable (< 50% of mid)
+                        const mid = (c.bid + c.ask) / 2;
+                        const spread = c.ask - c.bid;
+                        if (spread / mid > 0.5) return false;
+
+                        // Moneyness filter: focus on strikes within reasonable range
+                        // Typically 70% to 130% of current price
+                        const moneyness = c.strike / currentPrice;
+                        if (moneyness < 0.70 || moneyness > 1.30) return false;
+
+                        return true;
+                    })
+                    .map(c => ({
+                        k: c.strike,
+                        p: (c.bid + c.ask) / 2,
+                        vol: c.volume,
+                        oi: c.openInterest
+                    }))
                     .sort((a, b) => a.k - b.k);
 
-                if (data.length < 10) throw new Error("Not enough liquid options to calculate RND.");
+                // Remove price outliers
+                data = removeOutliers(data, 'p', 2.0);
 
-                const strikes = data.map(d => d.k);
-                const prices = data.map(d => d.p);
+                if (data.length < 15) throw new Error("Not enough liquid options to calculate RND. Try a different expiration.");
 
-                // 3. Math (Smooth -> D1 -> D2)
-                // Bandwidth = 1.5% of spot price is a good heuristic
-                const sigma = currentPrice * 0.015;
+                // Interpolate to uniform grid for stable derivatives
+                const interpolated = interpolateToGrid(
+                    data.map(d => d.k),
+                    data.map(d => d.p),
+                    150 // More points for smoother curve
+                );
 
-                const smoothPrices = gaussianSmooth(strikes, prices, sigma);
-                const d1 = derivative(strikes, smoothPrices);
-                const d2 = derivative(d1.x, d1.y); // PDF
+                const strikes = interpolated.strikes;
+                const prices = interpolated.prices;
 
-                // Normalize PDF
-                const pdfY = d2.y.map(y => Math.max(0, y)); // Clip negatives
-                const area = pdfY.reduce((a, b) => a + b, 0);
-                const finalPDF = pdfY.map(y => y / area); // Normalize
+                // 3. Math (Multi-pass Smooth -> Smooth Derivative)
+                // Adaptive bandwidth based on strike spacing
+                const avgSpacing = (strikes[strikes.length - 1] - strikes[0]) / strikes.length;
+                const sigma = Math.max(currentPrice * 0.025, avgSpacing * 4); // More aggressive smoothing
+
+                // Multi-pass smoothing for very smooth price curve
+                const smoothPrices = multiPassSmooth(strikes, prices, sigma, 3);
+
+                // Use smooth derivative with larger window
+                const d1 = smoothDerivative(strikes, smoothPrices, 7);
+
+                // Smooth d1 before taking second derivative
+                const smoothD1 = multiPassSmooth(d1.x, d1.y, sigma * 0.8, 2);
+                const d2 = smoothDerivative(d1.x, smoothD1, 7); // PDF
+
+                // Final smoothing pass on PDF
+                let pdfY = multiPassSmooth(d2.x, d2.y, sigma * 0.5, 2);
+
+                // Clip negatives and very small values
+                pdfY = pdfY.map(y => Math.max(0, y));
+
+                // Normalize PDF properly (integrate with trapezoid rule)
+                let area = 0;
+                for (let i = 1; i < d2.x.length; i++) {
+                    area += (pdfY[i] + pdfY[i - 1]) / 2 * (d2.x[i] - d2.x[i - 1]);
+                }
+                const finalPDF = area > 0 ? pdfY.map(y => y / area) : pdfY;
 
                 // 4. Plot
                 Plotly.newPlot('chart', [{
