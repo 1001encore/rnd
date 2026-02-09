@@ -13,19 +13,38 @@
             --text: #e0e0e0;
             --accent: #00e676;
             --err: #ff5252;
+            --panel-width: 220px;
         }
 
         body {
             background-color: var(--bg);
             color: var(--text);
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-            padding: 20px;
+            padding: 0;
             margin: 0;
         }
 
-        .container {
-            max-width: 1000px;
-            margin: 0 auto;
+        .app-layout {
+            display: flex;
+            flex-direction: column;
+            min-height: 100vh;
+        }
+
+        .app-header {
+            padding: 20px 20px 0 20px;
+        }
+
+        .main-area {
+            display: flex;
+            flex: 1;
+            padding-top: 20px;
+        }
+
+        .content-area {
+            flex: 1;
+            padding: 0 20px 20px 20px;
+            display: flex;
+            flex-direction: column;
         }
 
         /* Header */
@@ -62,6 +81,143 @@
             min-width: 120px;
         }
 
+        /* Date selector panel */
+
+        .date-panel {
+            background: var(--card);
+            border: 1px solid #333;
+            border-radius: 8px;
+            width: var(--panel-width);
+            flex-shrink: 0;
+            display: flex;
+            flex-direction: column;
+            padding: 10px;
+            box-sizing: border-box;
+            margin-left: 20px;
+            margin-bottom: 20px;
+        }
+
+        .date-panel-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid #333;
+        }
+
+        .date-panel-title {
+            color: #ccc;
+            font-size: 0.85rem;
+            font-weight: 600;
+        }
+
+        .date-actions {
+            display: flex;
+            gap: 4px;
+        }
+
+        .date-actions button {
+            padding: 2px 6px;
+            font-size: 0.65rem;
+            background: #333;
+            color: #aaa;
+            border-radius: 3px;
+            border: 1px solid #444;
+            cursor: pointer;
+            flex: 1;
+        }
+
+        .date-actions button:hover {
+            background: #444;
+            color: white;
+            border-color: #555;
+        }
+
+        .date-checkboxes {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: flex-end;
+            gap: 2px;
+            padding-right: 4px;
+            max-height: 70vh;
+            overflow-y: auto;
+        }
+
+        /* Custom Scrollbar for panel */
+        .date-checkboxes::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        .date-checkboxes::-webkit-scrollbar-track {
+            background: #111;
+        }
+
+        .date-checkboxes::-webkit-scrollbar-thumb {
+            background: #333;
+            border-radius: 3px;
+        }
+
+        .date-checkboxes::-webkit-scrollbar-thumb:hover {
+            background: #444;
+        }
+
+        .date-checkbox {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 4px 8px;
+            cursor: pointer;
+            transition: background 0.1s;
+            font-size: 0.8rem;
+            color: #aaa;
+            border-radius: 4px;
+        }
+
+        .date-checkbox:hover {
+            background: #222;
+            color: #fff;
+        }
+
+        .date-checkbox.selected {
+            background: rgba(0, 230, 118, 0.15);
+            color: var(--accent);
+            font-weight: 500;
+        }
+
+        .date-checkbox input {
+            accent-color: var(--accent);
+            width: 13px;
+            height: 13px;
+            cursor: pointer;
+            margin: 0;
+            flex-shrink: 0;
+        }
+
+        .date-checkbox label {
+            cursor: pointer;
+            user-select: none;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .empty-state {
+            color: #444;
+            font-size: 0.8rem;
+            text-align: center;
+            margin-top: 20px;
+            font-style: italic;
+        }
+
+        .date-checkbox label {
+            cursor: pointer;
+            user-select: none;
+        }
+
+
+
         button {
             padding: 10px 20px;
             background: var(--accent);
@@ -86,7 +242,9 @@
         /* Chart Area */
         #chart {
             width: 100%;
-            height: 600px;
+            height: calc(100vh - 200px);
+            /* Fill remaining height roughly */
+            min-height: 500px;
             background: var(--card);
             margin-top: 20px;
             border-radius: 8px;
@@ -130,23 +288,38 @@
 
 <body>
 
-    <div class="container">
-        <h1>RND Explorer</h1>
-        <p>Risk-Neutral Density Estimator (Pure JS + Cloudflare)</p>
-
-        <div class="controls">
-            <input type="text" id="ticker" value="SPY" placeholder="Ticker (e.g. SPY)">
-            <button onclick="loadExpirations()" id="btn-load">1. Load Dates</button>
-            <select id="expiry" disabled>
-                <option>Select Date...</option>
-            </select>
-            <button onclick="calculateRND()" id="btn-calc" disabled>2. Calculate PDF</button>
+    <div class="app-layout">
+        <div class="app-header">
+            <h1>Risk-Neutral Density (RND) Visualizer</h1>
         </div>
 
-        <div id="error-box" class="error"></div>
+        <div class="main-area">
+            <div id="date-panel" class="date-panel">
+                <div class="date-panel-header">
+                    <span class="date-panel-title">Expirations</span>
+                    <div class="date-actions">
+                        <button onclick="selectAllDates()" title="Select All">All</button>
+                        <button onclick="clearAllDates()" title="Clear All">None</button>
+                    </div>
+                </div>
+                <div id="date-checkboxes" class="date-checkboxes">
+                    <div class="empty-state">Load dates first</div>
+                </div>
+            </div>
 
-        <div id="chart">
-            <div class="status" id="status-text">Enter a ticker to begin</div>
+            <div class="content-area">
+                <div class="controls">
+                    <input type="text" id="ticker" value="SPY" placeholder="Ticker (e.g. SPY)">
+                    <button onclick="loadExpirations()" id="btn-load">1. Load Dates</button>
+                    <button onclick="calculateRND()" id="btn-calc" disabled>2. Calculate & Chart</button>
+                </div>
+
+                <div id="error-box" class="error"></div>
+
+                <div id="chart">
+                    <div class="status" id="status-text">Enter a ticker to begin</div>
+                </div>
+            </div>
         </div>
     </div>
 
@@ -311,16 +484,37 @@
             ticker: document.getElementById("ticker"),
             loadBtn: document.getElementById("btn-load"),
             calcBtn: document.getElementById("btn-calc"),
-            select: document.getElementById("expiry"),
             chart: document.getElementById("chart"),
             status: document.getElementById("status-text"),
-            err: document.getElementById("error-box")
+            err: document.getElementById("error-box"),
+            datePanel: document.getElementById("date-panel"),
+            dateCheckboxes: document.getElementById("date-checkboxes")
         };
 
         function showError(msg) {
             ui.err.style.display = 'block';
             ui.err.innerText = "Error: " + msg;
             ui.status.innerText = "";
+        }
+
+        function toggleDateCheckbox(container) {
+            const checkbox = container.querySelector('input');
+            checkbox.checked = !checkbox.checked;
+            container.classList.toggle('selected', checkbox.checked);
+        }
+
+        function selectAllDates() {
+            document.querySelectorAll('.date-checkbox input').forEach(cb => {
+                cb.checked = true;
+                cb.closest('.date-checkbox').classList.add('selected');
+            });
+        }
+
+        function clearAllDates() {
+            document.querySelectorAll('.date-checkbox input').forEach(cb => {
+                cb.checked = false;
+                cb.closest('.date-checkbox').classList.remove('selected');
+            });
         }
 
         async function loadExpirations() {
@@ -335,24 +529,38 @@
                 if (!data.optionChain) throw new Error("No option data found");
 
                 const dates = data.optionChain.result[0].expirationDates;
-                ui.select.innerHTML = "";
+                ui.dateCheckboxes.innerHTML = "";
 
                 dates.forEach(ts => {
                     const d = new Date(ts * 1000);
-                    const dayOfWeek = d.getDay(); // Local timezone day
-                    // Skip weekends (Saturday = 6, Sunday = 0)
+                    const dayOfWeek = d.getDay();
+                    // Skip weekends
                     if (dayOfWeek === 0 || dayOfWeek === 6) return;
 
-                    const opt = document.createElement("option");
-                    opt.value = ts;
-                    opt.text = d.toISOString().split('T')[0];
-                    ui.select.appendChild(opt);
+                    const dateStr = d.toISOString().split('T')[0];
+                    const container = document.createElement('div');
+                    container.className = 'date-checkbox';
+                    container.onclick = function () { toggleDateCheckbox(this); };
+
+                    const checkbox = document.createElement('input');
+                    checkbox.type = 'checkbox';
+                    checkbox.id = `date-${ts}`;
+                    checkbox.value = ts;
+                    checkbox.onclick = function (e) { e.stopPropagation(); this.closest('.date-checkbox').classList.toggle('selected', this.checked); };
+
+                    const label = document.createElement('label');
+                    label.htmlFor = `date-${ts}`;
+                    label.textContent = dateStr;
+                    label.onclick = function (e) { e.preventDefault(); };
+
+                    container.appendChild(checkbox);
+                    container.appendChild(label);
+                    ui.dateCheckboxes.appendChild(container);
                 });
 
-                ui.select.disabled = false;
                 ui.calcBtn.disabled = false;
                 ui.loadBtn.innerText = "1. Load Dates";
-                ui.status.innerText = "Date Loaded. Click Calculate.";
+                ui.status.innerText = "Select dates, then click Calculate.";
 
             } catch (e) {
                 showError(e.message);
@@ -360,176 +568,202 @@
             }
         }
 
+        // Color palette for multiple overlays
+        const COLORS = [
+            '#00e676', '#ff7043', '#42a5f5', '#ab47bc', '#fdd835',
+            '#26c6da', '#ec407a', '#66bb6a', '#ff8a65', '#7e57c2'
+        ];
+
+        // Process single date and return RND data
+        async function processDate(ticker, date, currentPrice) {
+            const res = await fetch(`${API_URL}/?ticker=${ticker}&date=${date}`);
+            const json = await res.json();
+
+            if (json.error) throw new Error(json.details);
+
+            const result = json.optionChain.result[0];
+            const calls = result.options[0].calls || [];
+            const puts = result.options[0].puts || [];
+            const spotPrice = result.quote.regularMarketPrice;
+
+            // Build maps of call and put prices by strike
+            const callMap = new Map();
+            const putMap = new Map();
+
+            const isValidOption = (opt) => {
+                if ((!opt.volume || opt.volume < 1) && (!opt.openInterest || opt.openInterest < 5)) return false;
+                if (!opt.bid || opt.bid < 0.01) return false;
+                if (!opt.ask || opt.ask <= opt.bid) return false;
+                const mid = (opt.bid + opt.ask) / 2;
+                const spread = opt.ask - opt.bid;
+                if (spread / mid > 0.8) return false;
+                return true;
+            };
+
+            calls.forEach(c => {
+                if (isValidOption(c)) callMap.set(c.strike, (c.bid + c.ask) / 2);
+            });
+
+            puts.forEach(p => {
+                if (isValidOption(p)) putMap.set(p.strike, (p.bid + p.ask) / 2);
+            });
+
+            const allStrikes = [...new Set([...callMap.keys(), ...putMap.keys()])]
+                .filter(k => {
+                    const moneyness = k / spotPrice;
+                    return moneyness >= 0.80 && moneyness <= 1.40;
+                })
+                .sort((a, b) => a - b);
+
+            if (allStrikes.length < 10) throw new Error(`Not enough liquid options for ${new Date(date * 1000).toLocaleDateString()}`);
+
+            const atmLow = spotPrice * 0.98;
+            const atmHigh = spotPrice * 1.02;
+
+            let data = allStrikes.map(strike => {
+                const callPrice = callMap.get(strike);
+                const putPrice = putMap.get(strike);
+                let price;
+
+                if (strike >= atmLow && strike <= atmHigh) {
+                    if (callPrice !== undefined && putPrice !== undefined) {
+                        const putAsCall = putPrice + spotPrice - strike;
+                        price = (callPrice + putAsCall) / 2;
+                    } else if (callPrice !== undefined) {
+                        price = callPrice;
+                    } else if (putPrice !== undefined) {
+                        price = putPrice + spotPrice - strike;
+                    } else {
+                        return null;
+                    }
+                } else if (strike < spotPrice) {
+                    if (putPrice !== undefined) {
+                        price = putPrice + spotPrice - strike;
+                    } else if (callPrice !== undefined) {
+                        price = callPrice;
+                    } else {
+                        return null;
+                    }
+                } else {
+                    if (callPrice !== undefined) {
+                        price = callPrice;
+                    } else if (putPrice !== undefined) {
+                        price = putPrice + spotPrice - strike;
+                    } else {
+                        return null;
+                    }
+                }
+
+                return { k: strike, p: Math.max(0.01, price) };
+            }).filter(d => d !== null);
+
+            data = removeOutliers(data, 'p', 2.5);
+            if (data.length < 10) throw new Error(`Not enough data for ${new Date(date * 1000).toLocaleDateString()}`);
+
+            const strikes = data.map(d => d.k);
+            const prices = data.map(d => d.p);
+
+            const numControlPoints = Math.min(25, Math.max(12, Math.floor(data.length / 3)));
+            const spline = fitBSpline(strikes, prices, numControlPoints, 3);
+
+            const minK = Math.min(...strikes);
+            const maxK = Math.max(...strikes);
+            const range = maxK - minK;
+            const evalMin = minK - range * 0.05;
+            const evalMax = maxK + range * 0.05;
+            const numEvalPoints = 200;
+
+            const evalStrikes = [];
+            for (let i = 0; i < numEvalPoints; i++) {
+                evalStrikes.push(evalMin + (evalMax - evalMin) * i / (numEvalPoints - 1));
+            }
+
+            let pdfY = bsplineSecondDerivative(spline, evalStrikes);
+            const sigma = (maxK - minK) / 30;
+            pdfY = gaussianSmooth(evalStrikes, pdfY, sigma);
+            pdfY = pdfY.map(y => Math.max(0, y));
+
+            let area = 0;
+            for (let i = 1; i < evalStrikes.length; i++) {
+                area += (pdfY[i] + pdfY[i - 1]) / 2 * (evalStrikes[i] - evalStrikes[i - 1]);
+            }
+            const finalPDF = area > 0 ? pdfY.map(y => y / area) : pdfY;
+
+            return { evalStrikes, finalPDF, spotPrice, dateLabel: new Date(date * 1000).toLocaleDateString() };
+        }
+
         async function calculateRND() {
             ui.calcBtn.innerText = "Calculating...";
-            ui.status.innerText = "Fetching Option Chain...";
-            ui.chart.innerHTML = ""; // Clear chart
+            ui.chart.innerHTML = "";
 
             try {
                 const ticker = ui.ticker.value;
-                const date = ui.select.value;
+                const checkedBoxes = document.querySelectorAll('.date-checkbox input:checked');
+                const selectedDates = Array.from(checkedBoxes).map(cb => cb.value);
 
-                // 1. Fetch Data
-                const res = await fetch(`${API_URL}/?ticker=${ticker}&date=${date}`);
-                const json = await res.json();
+                if (selectedDates.length === 0) {
+                    throw new Error("Please select at least one expiration date.");
+                }
 
-                if (json.error) throw new Error(json.details);
+                ui.status.innerText = `Processing ${selectedDates.length} date(s)...`;
 
-                const result = json.optionChain.result[0];
-                const calls = result.options[0].calls || [];
-                const puts = result.options[0].puts || [];
-                const currentPrice = result.quote.regularMarketPrice;
-
-                // 2. Build maps of call and put prices by strike
-                const callMap = new Map();
-                const putMap = new Map();
-
-                // Helper to check if option is valid
-                const isValidOption = (opt) => {
-                    if ((!opt.volume || opt.volume < 1) && (!opt.openInterest || opt.openInterest < 5)) return false;
-                    if (!opt.bid || opt.bid < 0.01) return false;
-                    if (!opt.ask || opt.ask <= opt.bid) return false;
-                    const mid = (opt.bid + opt.ask) / 2;
-                    const spread = opt.ask - opt.bid;
-                    if (spread / mid > 0.8) return false;
-                    return true;
-                };
-
-                calls.forEach(c => {
-                    if (isValidOption(c)) {
-                        callMap.set(c.strike, (c.bid + c.ask) / 2);
-                    }
-                });
-
-                puts.forEach(p => {
-                    if (isValidOption(p)) {
-                        putMap.set(p.strike, (p.bid + p.ask) / 2);
-                    }
-                });
-
-                // 3. Build unified call-price curve using OTM options only
-                // - For K < Spot: Use OTM puts, convert to call via put-call parity: C = P + S - K
-                // - For K > Spot: Use OTM calls directly
-                // - For K ≈ Spot: Average both (if available)
-
-                const allStrikes = [...new Set([...callMap.keys(), ...putMap.keys()])]
-                    .filter(k => {
-                        const moneyness = k / currentPrice;
-                        return moneyness >= 0.70 && moneyness <= 1.30;
+                // Process all selected dates in parallel
+                const results = await Promise.all(
+                    selectedDates.map((date, idx) => {
+                        ui.status.innerText = `Fetching ${idx + 1}/${selectedDates.length}...`;
+                        return processDate(ticker, date, null);
                     })
-                    .sort((a, b) => a - b);
+                );
 
-                if (allStrikes.length < 10) throw new Error("Not enough liquid options to calculate RND. Try a different expiration.");
+                // Build traces for each date
+                const traces = results.map((r, idx) => ({
+                    x: r.evalStrikes,
+                    y: r.finalPDF,
+                    mode: 'lines',
+                    fill: results.length === 1 ? 'tozeroy' : 'none',
+                    line: { color: COLORS[idx % COLORS.length], width: 2.5 },
+                    name: r.dateLabel
+                }));
 
-                // ATM zone: within 2% of spot
-                const atmLow = currentPrice * 0.98;
-                const atmHigh = currentPrice * 1.02;
+                // Find global max for spot line
+                const globalMaxPDF = Math.max(...results.flatMap(r => r.finalPDF));
+                const currentPrice = results[0].spotPrice;
 
-                let data = allStrikes.map(strike => {
-                    const callPrice = callMap.get(strike);
-                    const putPrice = putMap.get(strike);
+                // Determine shared x-axis range from all data
+                const allStrikes = results.flatMap(r => r.evalStrikes);
+                const xMin = Math.min(...allStrikes);
+                const xMax = Math.max(...allStrikes);
 
-                    let price;
+                const title = results.length === 1
+                    ? `RND: ${ticker} (${results[0].dateLabel})`
+                    : `RND Comparison: ${ticker} (${results.length} expirations)`;
 
-                    if (strike >= atmLow && strike <= atmHigh) {
-                        // ATM zone: use both if available, prefer average
-                        if (callPrice !== undefined && putPrice !== undefined) {
-                            // Convert put to call-equivalent and average
-                            const putAsCall = putPrice + currentPrice - strike;
-                            price = (callPrice + putAsCall) / 2;
-                        } else if (callPrice !== undefined) {
-                            price = callPrice;
-                        } else if (putPrice !== undefined) {
-                            price = putPrice + currentPrice - strike;
-                        } else {
-                            return null;
-                        }
-                    } else if (strike < currentPrice) {
-                        // Below spot: use OTM put, convert to call-equivalent
-                        if (putPrice !== undefined) {
-                            price = putPrice + currentPrice - strike;
-                        } else if (callPrice !== undefined) {
-                            // Fallback to ITM call if no put available
-                            price = callPrice;
-                        } else {
-                            return null;
-                        }
-                    } else {
-                        // Above spot: use OTM call directly
-                        if (callPrice !== undefined) {
-                            price = callPrice;
-                        } else if (putPrice !== undefined) {
-                            // Fallback: convert ITM put to call
-                            price = putPrice + currentPrice - strike;
-                        } else {
-                            return null;
-                        }
-                    }
-
-                    return { k: strike, p: Math.max(0.01, price) };
-                }).filter(d => d !== null);
-
-                // Remove price outliers
-                data = removeOutliers(data, 'p', 2.5);
-
-                if (data.length < 10) throw new Error("Not enough liquid options to calculate RND. Try a different expiration.");
-
-                const strikes = data.map(d => d.k);
-                const prices = data.map(d => d.p);
-
-                // 3. Fit B-spline to call prices
-                // Use more control points for better fit, fewer for smoother curve
-                const numControlPoints = Math.min(25, Math.max(12, Math.floor(data.length / 3)));
-                const spline = fitBSpline(strikes, prices, numControlPoints, 3);
-
-                // Generate evaluation points (extend slightly beyond data range for smooth tails)
-                const minK = Math.min(...strikes);
-                const maxK = Math.max(...strikes);
-                const range = maxK - minK;
-                const evalMin = minK - range * 0.05; // Extend 5% on each side
-                const evalMax = maxK + range * 0.05;
-                const numEvalPoints = 200;
-
-                const evalStrikes = [];
-                for (let i = 0; i < numEvalPoints; i++) {
-                    evalStrikes.push(evalMin + (evalMax - evalMin) * i / (numEvalPoints - 1));
-                }
-
-                // Compute second derivative (the RND/PDF)
-                let pdfY = bsplineSecondDerivative(spline, evalStrikes);
-
-                // Light Gaussian smoothing on the PDF for extra polish
-                const sigma = (maxK - minK) / 30;
-                pdfY = gaussianSmooth(evalStrikes, pdfY, sigma);
-
-                // Clip negatives
-                pdfY = pdfY.map(y => Math.max(0, y));
-
-                // Normalize PDF (trapezoid rule)
-                let area = 0;
-                for (let i = 1; i < evalStrikes.length; i++) {
-                    area += (pdfY[i] + pdfY[i - 1]) / 2 * (evalStrikes[i] - evalStrikes[i - 1]);
-                }
-                const finalPDF = area > 0 ? pdfY.map(y => y / area) : pdfY;
-
-                // 4. Plot
-                Plotly.newPlot('chart', [{
-                    x: evalStrikes, y: finalPDF,
-                    mode: 'lines', fill: 'tozeroy',
-                    line: { color: '#00e676', width: 3 },
-                    name: 'Implied Probability'
-                }], {
-                    title: `RND: ${ticker} (${new Date(date * 1000).toLocaleDateString()})`,
-                    paper_bgcolor: '#161616', plot_bgcolor: '#161616',
+                Plotly.newPlot('chart', traces, {
+                    title: title,
+                    paper_bgcolor: '#161616',
+                    plot_bgcolor: '#161616',
                     font: { color: '#e0e0e0' },
-                    xaxis: { title: 'Strike Price ($)', gridcolor: '#333' },
+                    xaxis: { title: 'Strike Price ($)', gridcolor: '#333', range: [xMin, xMax] },
                     yaxis: { title: 'Probability Density', gridcolor: '#333' },
-                    shapes: [{ type: 'line', x0: currentPrice, x1: currentPrice, y0: 0, y1: Math.max(...finalPDF), line: { color: 'white', dash: 'dot' } }],
+                    shapes: [{
+                        type: 'line',
+                        x0: currentPrice, x1: currentPrice,
+                        y0: 0, y1: globalMaxPDF,
+                        line: { color: 'white', dash: 'dot', width: 1.5 }
+                    }],
+                    legend: {
+                        x: 1, y: 1,
+                        xanchor: 'right',
+                        bgcolor: 'rgba(22,22,22,0.8)',
+                        bordercolor: '#333',
+                        borderwidth: 1
+                    },
                     autosize: true,
                     margin: { l: 60, r: 30, t: 50, b: 50 }
                 }, { responsive: true });
 
                 ui.calcBtn.innerText = "2. Calculate PDF";
+                ui.status.innerText = "";
 
             } catch (e) {
                 showError(e.message);
