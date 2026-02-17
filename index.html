@@ -283,6 +283,77 @@
             display: none;
             border: 1px solid var(--err);
         }
+
+        /* Explainer Accordion */
+        .explainer {
+            padding: 40px 20px 60px 20px;
+        }
+
+        .explainer-accordion {
+            margin: 0 auto;
+            background: var(--card);
+            border: 1px solid #333;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+
+        .explainer-accordion summary {
+            padding: 18px 20px;
+            cursor: pointer;
+            color: var(--accent);
+            font-weight: 600;
+            font-size: 1rem;
+            list-style: none;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            user-select: none;
+        }
+
+        .explainer-accordion summary::-webkit-details-marker {
+            display: none;
+        }
+
+        .explainer-accordion summary::after {
+            content: '+';
+            font-size: 1.3rem;
+            color: #666;
+            transition: transform 0.2s;
+        }
+
+        .explainer-accordion[open] summary::after {
+            content: '−';
+        }
+
+        .explainer-accordion summary:hover {
+            background: rgba(255, 255, 255, 0.03);
+        }
+
+        .explainer-body {
+            padding: 20px 30px 30px 30px;
+            border-top: 1px solid #333;
+        }
+
+        .explainer-body h3 {
+            color: #ccc;
+            font-size: 1.05rem;
+            margin: 25px 0 10px 0;
+        }
+
+        .explainer-body p {
+            color: #888;
+            font-size: 0.95rem;
+            line-height: 1.8;
+            margin: 0 0 15px 0;
+        }
+
+        .explainer-body .disclaimer {
+            font-size: 0.85rem;
+            color: #555;
+            border-left: 2px solid #333;
+            padding-left: 12px;
+            margin-top: 25px;
+        }
     </style>
 </head>
 
@@ -322,6 +393,90 @@
             </div>
         </div>
     </div>
+
+    <footer class="explainer">
+        <details class="explainer-accordion">
+            <summary>What is This About?</summary>
+            <div class="explainer-body">
+                <h3>Why This Exists</h3>
+                <p>
+                    In financial markets, if you try to estimate how rare an event is using a normal distribution,
+                    you'll be catastrophically wrong. Take the recent one day silver crash: a move of that
+                    magnitude was roughly a 5-sigma event -- something that, under Gaussian assumptions, should happen
+                    once every ~7 million trading days, or about 27,000 years. And yet it happened. So did the 1987
+                    crash, the 2008 financial crisis, and the 2020 COVID drop. Returns are both
+                    <strong>skewed</strong> (crashes happen faster than rallies) and <strong>fat-tailed</strong>
+                    (extreme events occur far more often than a bell curve would predict).
+                </p>
+                <p>
+                    One approach is to model fat tails historically, to capture the asset's charachteristics --
+                    by measuring kurtosis from past returns (which assumes past returns are a good indicator of future
+                    returns) and fitting
+                    distributions like Student's t, (which involve guessing the parameters). But historical data is
+                    backward-looking, regime-dependent, and
+                    may not reflect <em>current</em> market expectations. What if a crisis is brewing that has no
+                    historical example?
+                </p>
+                <p>
+                    <strong>This tool takes a different approach:</strong> instead of modeling, we simply
+                    <em>extract</em>
+                    the probability distribution that the market is actively pricing in right now. Traders' collective
+                    bets, expressed through option prices at every strike, implicitly define a probability distribution.
+                    We recover that directly.
+                </p>
+
+                <h3>What This Shows (And What It Doesn't)</h3>
+                <p>
+                    <strong>The Risk-Neutral Density (RND) is the market's <strong>pricing</strong> -- not a
+                        forecast.</strong>
+                    It answers: "Given current option prices, what probability distribution is consistent with
+                    no-arbitrage?"
+                    This is fundamentally different from predicting where prices will actually go.
+                </p>
+                <p>
+                    <strong>Why "risk-neutral" matters:</strong> In a world where investors were indifferent to risk,
+                    the RND would equal actual probabilities. But investors are risk-averse: they pay extra for downside
+                    protection (a phenomenon known as the equity risk premium, which appeared after aforementioned
+                    crashes). A heavily left-skewed RND doesn't necessarily mean a crash is likely -- it may just mean
+                    crash insurance is expensive.
+                </p>
+                <p>
+                    <strong>What you can do with this:</strong> RND is useful for understanding market sentiment
+                    and comparing implied expectations across expirations. Some traders use RNDs to construct
+                    market-neutral portfolios -- if you believe the real-world distribution differs from the
+                    risk-neutral one, that's a potential edge.
+                </p>
+
+                <h3>How It's Calculated</h3>
+                <p>
+                    The mathematical foundation is the <strong>Breeden-Litzenberger formula</strong> (1978): the
+                    risk-neutral density equals the second derivative of call prices with respect to strike.
+                    Intuitively,
+                    the "curvature" of option prices across strikes encodes probability mass at each price level.
+                </p>
+                <p>
+                    Real-time option data is fetched, filtered for liquid contracts, and puts are converted to
+                    call-equivalent prices via put-call parity. A smooth B-spline curve is fitted to remove noise,
+                    the second derivative is computed, and the result is normalized into a proper probability density.
+                </p>
+
+                <h3>Interesting Patterns</h3>
+                <p>
+                    <strong>Bimodal Shapes:</strong> Before binary events (earnings, FED decisions, elections), the RND
+                    may show two distinct peaks -- the market is pricing two possible outcomes rather than a single
+                    range.
+                    The relative heights and positions reveal the market's implied scenario probabilities.
+                </p>
+                <p>
+                    <strong>Contrarian Signals:</strong> When the RND's peak shifts heavily to the downside, it can
+                    indicate that fear is already fully priced in -- and the market may be near a bottom. Conversely,
+                    when the peak is stretched far to the upside with thin left tails, complacency may be setting in.
+                    Extreme positioning in either direction often precedes a reversal, since the options market tends
+                    to overshoot when sentiment is at its most one-sided.
+                </p>
+            </div>
+        </details>
+    </footer>
 
     <script>
         // --- CONFIGURATION ---
@@ -590,22 +745,39 @@
             const callMap = new Map();
             const putMap = new Map();
 
+            // Helper to get price: preference for Mid, fallback to Last
+            const getPrice = (opt) => {
+                if (opt.bid && opt.bid > 0 && opt.ask && opt.ask > opt.bid) {
+                    return (opt.bid + opt.ask) / 2;
+                }
+                return opt.lastPrice;
+            };
+
             const isValidOption = (opt) => {
                 if ((!opt.volume || opt.volume < 1) && (!opt.openInterest || opt.openInterest < 5)) return false;
-                if (!opt.bid || opt.bid < 0.01) return false;
-                if (!opt.ask || opt.ask <= opt.bid) return false;
-                const mid = (opt.bid + opt.ask) / 2;
-                const spread = opt.ask - opt.bid;
-                if (spread / mid > 0.8) return false;
-                return true;
+
+                // Check if we have valid quotes
+                if (opt.bid && opt.bid > 0 && opt.ask && opt.ask > opt.bid) {
+                    const mid = (opt.bid + opt.ask) / 2;
+                    const spread = opt.ask - opt.bid;
+                    if (spread / mid > 0.8) return false;
+                    return true;
+                }
+
+                // Fallback for holidays/market close: use Last Price if available
+                if (opt.lastPrice && opt.lastPrice > 0) {
+                    return true;
+                }
+
+                return false;
             };
 
             calls.forEach(c => {
-                if (isValidOption(c)) callMap.set(c.strike, (c.bid + c.ask) / 2);
+                if (isValidOption(c)) callMap.set(c.strike, getPrice(c));
             });
 
             puts.forEach(p => {
-                if (isValidOption(p)) putMap.set(p.strike, (p.bid + p.ask) / 2);
+                if (isValidOption(p)) putMap.set(p.strike, getPrice(p));
             });
 
             const allStrikes = [...new Set([...callMap.keys(), ...putMap.keys()])]
@@ -762,7 +934,7 @@
                     margin: { l: 60, r: 30, t: 50, b: 50 }
                 }, { responsive: true });
 
-                ui.calcBtn.innerText = "2. Calculate PDF";
+                ui.calcBtn.innerText = "2. Calculate & Chart";
                 ui.status.innerText = "";
 
             } catch (e) {
